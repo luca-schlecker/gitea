@@ -18,6 +18,7 @@ import octiconCheckCircleFill from '../../public/assets/img/svg/octicon-check-ci
 import octiconChevronDown from '../../public/assets/img/svg/octicon-chevron-down.svg';
 import octiconChevronLeft from '../../public/assets/img/svg/octicon-chevron-left.svg';
 import octiconChevronRight from '../../public/assets/img/svg/octicon-chevron-right.svg';
+import octiconChevronUp from '../../public/assets/img/svg/octicon-chevron-up.svg';
 import octiconCircle from '../../public/assets/img/svg/octicon-circle.svg';
 import octiconClock from '../../public/assets/img/svg/octicon-clock.svg';
 import octiconCode from '../../public/assets/img/svg/octicon-code.svg';
@@ -111,6 +112,7 @@ const svgs = {
   'octicon-chevron-down': octiconChevronDown,
   'octicon-chevron-left': octiconChevronLeft,
   'octicon-chevron-right': octiconChevronRight,
+  'octicon-chevron-up': octiconChevronUp,
   'octicon-circle': octiconCircle,
   'octicon-clock': octiconClock,
   'octicon-code': octiconCode,
