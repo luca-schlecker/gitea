@@ -47,6 +47,7 @@ data.teamId = {{.Team.ID}};
 
 {{if not .ContextUser.IsOrganization}}
 data.organizations = [{{range .Orgs}}{'name': {{.Name}}, 'full_name': {{.FullName}}, 'num_repos': {{.NumRepos}}, 'org_visibility': {{.Visibility}}},{{end}}];
+data.avatars = { {{range .Orgs}}{{.Name}}: {{.Avatar}},{{end}}{{.ContextUser.Name}}: {{.ContextUser.Avatar}} };
 data.isOrganization = false;
 data.organizationsTotalCount = {{.UserOrgsCount}};
 data.canCreateOrganization = {{.SignedUser.CanCreateOrganization}};
