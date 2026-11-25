@@ -470,6 +470,9 @@
 .ui.menu.two.item .item {
   width: 50%;
 }
+.ui.menu.three.item .item {
+  width: calc(100% / 3);
+}
 
 .ui.pointing.menu .item::after {
   visibility: hidden;
