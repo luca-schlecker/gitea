@@ -22,6 +22,18 @@ type DashboardRepo = {
   locale_latest_commit_status_state?: string,
 };
 
+type FolderRepoItem = {
+  kind: "repo",
+  name: string,
+  repo: DashboardRepo,
+};
+type FolderSubfolderItem = {
+  kind: "folder",
+  name: string,
+  children: FolderItem[],
+};
+type FolderItem = FolderRepoItem | FolderSubfolderItem;
+
 type CommitStatus = 'pending' | 'success' | 'error' | 'failure' | 'warning' | 'skipped';
 
 type WebSearchRepo = {
@@ -40,7 +52,7 @@ type CommitStatusMap = {
   };
 };
 
-type Tab = 'repos' | 'organizations';
+type Tab = 'repos' | 'organizations' | 'folders';
 type RepoFilter = 'all' | 'forks' | 'mirrors' | 'sources' | 'collaborative';
 type ArchivedFilter = 'archived' | 'unarchived' | 'both';
 type PrivateFilter = 'private' | 'public' | 'both';
@@ -167,6 +179,90 @@ const searchURL = computed(() => {
     `&page=${page.value}&limit=${searchLimit}&mode=${searchMode.value}${archived}${isPrivate}`;
 });
 
+const folderSeparator: RegExp = /\/|\./;
+const currentFolderPath = shallowRef<string[]>(JSON.parse(initialParams.get('repo-folder') || '[]'));
+const fullFolderTree = shallowRef<FolderItem[]>([]);
+const currentFolder = computed(() => {
+  let currentSubtree = fullFolderTree.value as FolderItem[];
+
+  for (const part of currentFolderPath.value as string[]) {
+    const nextSubtree = currentSubtree.filter(it => it.kind === "folder").find(it => it.name === part);
+    if (nextSubtree === undefined) { break; }
+    else { currentSubtree = nextSubtree.children; }
+  }
+
+  return currentSubtree;
+});
+const getAllReposURL = computed(() => {
+  const archived = archivedFilter.value === 'archived' ? '&archived=true' : archivedFilter.value === 'unarchived' ? '&archived=false' : '';
+  const isPrivate = privateFilter.value === 'private' ? '&is_private=true' : privateFilter.value === 'public' ? '&is_private=false' : '';
+  return `${subUrl}/repo/search?uid=${uid}&team_id=${teamId}&q=${urlQueryEscape(searchQuery.value)}&limit=18446744073709551615&mode=${searchMode.value}${archived}${isPrivate}`;
+});
+
+async function loadFolderTree() {
+  const request = GET(getAllReposURL.value);
+  const response = await request;
+  const json: { data: WebSearchRepo[] } = await response.json();
+
+  let tree: FolderItem[] = [];
+
+  for (const repo of json.data) {
+    let currentSubtree = tree;
+    const parts = repo.repository.full_name.split(folderSeparator);
+
+    for (let i = 0; i < parts.length - 1; i++) {
+      const nextSubtree = currentSubtree.filter(it => it.kind === "folder").find(it => it.name === parts[i]);
+      if (nextSubtree === undefined) {
+        const newFolder: FolderSubfolderItem = {
+          kind: "folder",
+          name: parts[i],
+          children: [],
+        };
+        currentSubtree.push(newFolder);
+        currentSubtree = newFolder.children;
+      } else {
+        currentSubtree = nextSubtree.children;
+      }
+    }
+
+    currentSubtree.push({
+      kind: "repo",
+      name: parts.at(-1) || "",
+      repo: {
+        ...repo.repository,
+        latest_commit_status_state: repo.latest_commit_status?.state, // if latest_commit_status is null, it means there is no commit status
+        latest_commit_status_state_link: repo.latest_commit_status?.target_url,
+        locale_latest_commit_status_state: repo.locale_latest_commit_status,
+      },
+    })
+  }
+
+  let queue = [tree];
+  while (queue.length > 0) {
+    const item = queue.pop()!;
+    queue.push(...item.filter(it => it.kind === "folder").map(it => it.children));
+    item.sort((l, r) => {
+      if (l.kind === "folder" && r.kind === "folder") { return 0; }
+      else if (l.kind === "folder" && r.kind === "repo") { return -1; }
+      else if (l.kind === "repo" && r.kind === "folder") { return 1; }
+      else if (l.kind === "repo" && r.kind === "repo") { return 0; }
+      else { return 0; }
+    });
+  }
+
+  fullFolderTree.value = tree;
+}
+
+function visitSubfolder(name: string) {
+  currentFolderPath.value = [...currentFolderPath.value, name];
+  updateHistory();
+}
+
+function visitParentFolder() {
+  currentFolderPath.value = currentFolderPath.value.slice(0, -1);
+  updateHistory();
+}
+
 onMounted(() => {
   changeReposFilter(reposFilter.value); // the filter dropdown is initialised by the global observer
 });
@@ -181,6 +277,7 @@ function changeReposFilter(filter: RepoFilter) {
   repos.value = [];
   page.value = 1;
   searchRepos();
+  loadFolderTree();
 }
 
 function updateHistory() {
@@ -222,6 +319,12 @@ function updateHistory() {
     params.set('repo-search-page', String(page.value));
   }
 
+  if (currentFolderPath.value.length === 0) {
+    params.delete('repo-folder');
+  } else {
+    params.set('repo-folder', `${JSON.stringify(currentFolderPath.value)}`);
+  }
+
   const queryString = params.toString();
   if (queryString) {
     window.history.replaceState({}, '', `?${queryString}`);
@@ -241,6 +344,7 @@ function toggleArchivedFilter() {
   page.value = 1;
   repos.value = [];
   searchRepos();
+  loadFolderTree();
 }
 
 function togglePrivateFilter() {
@@ -254,6 +358,7 @@ function togglePrivateFilter() {
   page.value = 1;
   repos.value = [];
   searchRepos();
+  loadFolderTree();
 }
 
 async function changePage(newPage: number) {
@@ -385,8 +490,9 @@ async function reposFilterKeyControl(e: KeyboardEvent) {
 </script>
 <template>
   <div>
-    <div v-if="!isOrganization" class="ui two item menu">
+    <div v-if="!isOrganization" class="ui three item menu">
       <a :class="{item: true, active: tab === 'repos'}" @click="changeTab('repos')">{{ textRepository }}</a>
+      <a :class="{item: true, active: tab === 'folders'}" @click="changeTab('folders')">Folders</a>
       <a :class="{item: true, active: tab === 'organizations'}" @click="changeTab('organizations')">{{ textOrganization }}</a>
     </div>
     <div v-show="tab === 'repos'" class="ui tab active list dashboard-repos">
@@ -543,6 +649,111 @@ async function reposFilterKeyControl(e: KeyboardEvent) {
               {{ org.num_repos }}
               <svg-icon name="octicon-repo" :size="16" class="tw-ml-1 tw-mt-0.5"/>
             </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+    <div v-if="!isOrganization" v-show="tab === 'folders'" class="ui tab active list dashboard-orgs">
+      <h4 class="ui top attached header tw-flex tw-items-center">
+        <div class="tw-flex-1 tw-flex tw-items-center">
+          {{ textMyRepos }}
+          <span v-if="reposTotalCount" class="ui grey label tw-ml-2">{{ reposTotalCount }}</span>
+        </div>
+        <a class="tw-flex tw-items-center muted" :href="subUrl + '/repo/create' + (isOrganization ? '?org=' + organizationId : '')" :data-tooltip-content="textNewRepo">
+          <svg-icon name="octicon-plus"/>
+        </a>
+      </h4>
+      <div v-if="!reposTotalCount" class="ui attached segment">
+        <div v-if="!isLoading" class="empty-repo-or-org">
+          <svg-icon name="octicon-git-branch" :size="24"/>
+          <p>{{ textNoRepo }}</p>
+        </div>
+        <!-- using the loading indicator here will cause more (unnecessary) page flickers, so at the moment, not use the loading indicator -->
+        <!-- <div v-else class="is-loading loading-icon-2px tw-min-h-16"/> -->
+      </div>
+      <div v-else class="ui attached segment repos-search">
+        <div class="ui small fluid action left icon input">
+          <input type="search" spellcheck="false" maxlength="255" @input="changeReposFilter(reposFilter)" v-model="searchQuery" ref="elSearch" @keydown="reposFilterKeyControl" :placeholder="textSearchRepos">
+          <i class="icon loading-icon-3px" :class="{'is-loading': isLoading}"><svg-icon name="octicon-search" :size="16"/></i>
+          <div class="ui dropdown icon button" :title="textFilter">
+            <svg-icon name="octicon-filter" :size="16"/>
+            <div class="menu">
+              <a class="item" @click="toggleArchivedFilter()">
+                <div class="ui checkbox" :title="checkboxArchivedFilterTitle">
+                  <!--the "tw-pointer-events-none" is necessary to prevent the checkbox from handling user's input,
+                      otherwise if the "input" handles click event for intermediate status, it breaks the internal state-->
+                  <input type="checkbox" class="tw-pointer-events-none" v-bind.prop="checkboxArchivedFilterProps">
+                  <label>
+                    <svg-icon name="octicon-archive" :size="16" class="tw-mr-1"/>
+                    {{ textShowArchived }}
+                  </label>
+                </div>
+              </a>
+              <a class="item" @click="togglePrivateFilter()">
+                <div class="ui checkbox" :title="checkboxPrivateFilterTitle">
+                  <input type="checkbox" class="tw-pointer-events-none" v-bind.prop="checkboxPrivateFilterProps">
+                  <label>
+                    <svg-icon name="octicon-lock" :size="16" class="tw-mr-1"/>
+                    {{ textShowPrivate }}
+                  </label>
+                </div>
+              </a>
+            </div>
+          </div>
+        </div>
+        <!-- stay hidden until the first count arrives, otherwise the label resizes after paint -->
+        <overflow-menu class="ui secondary pointing tabular borderless menu repos-filter" :class="{'tw-invisible': !initialSearchDone}">
+          <div class="overflow-menu-items tw-justify-center">
+            <a class="item" tabindex="0" :class="{active: reposFilter === 'all'}" @click="changeReposFilter('all')">
+              {{ textAll }}
+              <div v-show="reposFilter === 'all'" class="ui circular mini grey label">{{ repoTypeCount }}</div>
+            </a>
+            <a class="item" tabindex="0" :class="{active: reposFilter === 'sources'}" @click="changeReposFilter('sources')">
+              {{ textSources }}
+              <div v-show="reposFilter === 'sources'" class="ui circular mini grey label">{{ repoTypeCount }}</div>
+            </a>
+            <a class="item" tabindex="0" :class="{active: reposFilter === 'forks'}" @click="changeReposFilter('forks')">
+              {{ textForks }}
+              <div v-show="reposFilter === 'forks'" class="ui circular mini grey label">{{ repoTypeCount }}</div>
+            </a>
+            <a class="item" tabindex="0" :class="{active: reposFilter === 'mirrors'}" @click="changeReposFilter('mirrors')" v-if="isMirrorsEnabled">
+              {{ textMirrors }}
+              <div v-show="reposFilter === 'mirrors'" class="ui circular mini grey label">{{ repoTypeCount }}</div>
+            </a>
+            <a class="item" tabindex="0" :class="{active: reposFilter === 'collaborative'}" @click="changeReposFilter('collaborative')">
+              {{ textCollaborative }}
+              <div v-show="reposFilter === 'collaborative'" class="ui circular mini grey label">{{ repoTypeCount }}</div>
+            </a>
+          </div>
+        </overflow-menu>
+      </div>
+      <div v-if="currentFolder.length" class="ui attached table segment tw-rounded-b">
+        <ul class="repo-owner-name-list">
+          <li v-if="currentFolderPath.length" class="tw-flex tw-items-center tw-py-2">
+            <a class="repo-list-link muted" @click="visitParentFolder()">
+              <svg-icon :name="'octicon-chevron-up'" :size="16" class="repo-list-icon"/>
+              <div class="tw-inline-block tw-truncate">{{ currentFolderPath.join("/") }}</div>
+            </a>
+          </li>
+
+          <li class="tw-flex tw-items-center tw-py-2" v-for="item in currentFolder" :key="item.name">
+            <a v-if="item.kind === 'repo'" class="repo-list-link muted" :href="item.repo.link">
+              <svg-icon :name="repoIcon(item.repo)" :size="16" class="repo-list-icon"/>
+              <div class="tw-inline-block tw-truncate">{{ item.name }}</div>
+              <div v-if="item.repo.archived">
+                <svg-icon name="octicon-archive" :size="16"/>
+              </div>
+            </a>
+            <a v-if="item.kind === 'repo' && item.repo.latest_commit_status_state" class="tw-flex tw-items-center" :href="item.repo.latest_commit_status_state_link || undefined" :data-tooltip-content="item.repo.locale_latest_commit_status_state">
+              <!-- the commit status icon logic is taken from templates/repo/commit_status.tmpl -->
+              <svg-icon :name="statusIcon(item.repo.latest_commit_status_state)" :class="'tw-ml-2 commit-status icon ' + statusColor(item.repo.latest_commit_status_state)" :size="16"/>
+            </a>
+
+            <a v-if="item.kind === 'folder'" class="repo-list-link muted" @click="visitSubfolder(item.name)">
+              <img v-if="!currentFolderPath.length" loading="lazy" class="ui avatar tw-align-middle" height="16" width="16" style="margin-right: 2px;" :src="subUrl + '/avatars/' + (avatars[item.name] ?? '') + '?size=48'" alt="">
+              <svg-icon v-if="currentFolderPath.length" :name="'octicon-file-directory-fill'" :size="16" class="repo-list-icon"/>
+              <div class="tw-inline-block tw-truncate">{{ item.name }}</div>
+            </a>
           </li>
         </ul>
       </div>
