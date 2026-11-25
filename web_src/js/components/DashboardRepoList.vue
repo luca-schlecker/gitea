@@ -66,6 +66,7 @@ const searchModes = new Map<RepoFilter, string>([
 const pageDataDefaults = {
   subUrl: appSubUrl,
   organizations: [] as Array<{name: string, full_name: string, num_repos: number, org_visibility: string}>,
+  avatars: {} as Record<string, string>,
   isOrganization: true,
   canCreateOrganization: false,
   organizationsTotalCount: 0,
@@ -106,7 +107,7 @@ const pageDataDefaults = {
 };
 
 const {
-  subUrl, organizations, isOrganization, canCreateOrganization, organizationsTotalCount, organizationId,
+  subUrl, organizations, avatars, isOrganization, canCreateOrganization, organizationsTotalCount, organizationId,
   searchLimit, uid, teamId, isMirrorsEnabled,
   textNoOrg, textNoRepo, textRepository, textOrganization, textMyRepos, textNewRepo, textSearchRepos,
   textFilter, textShowArchived, textShowPrivate,
