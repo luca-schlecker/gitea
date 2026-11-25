@@ -161,6 +161,8 @@ func Create(ctx *context.Context) {
 		}
 	}
 
+	ctx.Data["repo_name"] = ctx.FormString("repo_name")
+
 	ctx.HTML(http.StatusOK, tplCreate)
 }
 
